@@ -1,0 +1,14 @@
+<div class="social-links">
+		{% if site.github_user %}
+			<a href="http://github.com/{{site.github_user}}" class="btn btn-dark"><i class="fa fa-github fa-lg"></i> GitHub</a>
+		{% endif %}
+		{% if site.twitter_user %}
+			<a href="http://twitter.com/{{site.twitter_user}}" class="btn btn-dark"><i class="fa fa-twitter fa-lg"></i> Twitter</a>
+		{% endif %}
+	  {% if site.googleplus_user %}
+	    <a href="https://plus.google.com/{{ site.googleplus_user }}" class="btn btn-dark"><i class="fa fa-google-plus-square fa-lg"></i> Google+</a>
+	  {% endif %}
+	  {% if site.show_rss_button %}
+	    <a href="{{ root_url }}atom.xml" class="btn btn-dark"><i class="fa fa-rss fa-lg"></i> RSS</a>
+	  {% endif %}
+</div>
