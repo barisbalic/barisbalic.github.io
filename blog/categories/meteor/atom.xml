@@ -1,0 +1,279 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+
+  <title><![CDATA[Category: meteor | barisbaris]]></title>
+  <link href="http://barisbalic.github.io/blog/categories/meteor/atom.xml" rel="self"/>
+  <link href="http://barisbalic.github.io/"/>
+  <updated>2014-03-25T23:03:54+00:00</updated>
+  <id>http://barisbalic.github.io/</id>
+  <author>
+    <name><![CDATA[Baris Balic]]></name>
+    
+  </author>
+  <generator uri="http://octopress.org/">Octopress</generator>
+
+  
+  <entry>
+    <title type="html"><![CDATA[Tracking your devices in Meatspace]]></title>
+    <link href="http://barisbalic.github.io/blog/2014/03/25/tracking-your-devices-in-meatspace/"/>
+    <updated>2014-03-25T19:14:11+00:00</updated>
+    <id>http://barisbalic.github.io/blog/2014/03/25/tracking-your-devices-in-meatspace</id>
+    <content type="html"><![CDATA[<p>I work at <a href="http://www.uswitch.com">uSwitch.com</a> and late last year we moved to some nice new offices.  Unfortunately, whilst awesome, the offices are split over 6 floors, I knew immediately that this would lead to missed connections and endless stair-runs, so I set about building something that would remove that pain.  The end result was this&hellip;</p>
+
+<p><img src="/images/whereabouts.gif" title="Whereabouts" alt="whereabouts-meteor" /></p>
+
+<p>It&rsquo;s loosely called &ldquo;whereabouts&rdquo;.  This post is about the process of discovery that made it possible to build the two applications that would make it easier for us to find each other throughout the building.  Despite being specific to our network, most of what is detailed here is based on principles that should apply to your own, and it should be possible to achieve the same results.<br/>
+A quick shout out to <a href="https://twitter.com/randomvariable">@randomvariable</a>, anytime you see the term &ldquo;ops&rdquo;, it really means him.  He fixed the network the first time I nuked half of it, and provided insight throughout.</p>
+
+<h2>Network spelunking</h2>
+
+<p>As you might expect we have Access Points (APs from here on in) on every floor, each one is providing a wireless network, but is at the same time also wired into the physical network.  It&rsquo;s sensible to assume that all APs would be managed centrally, and this system is usually referred to as a &ldquo;controller&rdquo;, so I asked the guys in IT Ops for access and logged into the interface to have a poke around.</p>
+
+<p>Peering at the settings in the control panel I noticed there was an option to set a remote <a href="http://en.wikipedia.org/wiki/Syslog">syslog</a> server.  Knowing that I would be running arbitrary code that would probably be processing logs, it seemed best to make use of this feature.  I went with <a href="http://www.rsyslog.com/">RSYSLOG</a> and set it up on a fresh Ubuntu instance, which was as simple as doing a <code>sudo apt-get install rsyslog</code>.</p>
+
+<p>By tailing the log on the Ubuntu instance I started to see various bits of output related to our network, but nothing particularly useful.<br/>
+The &ldquo;Access Points&rdquo; tab showed a list of all the APs in the building and their corresponding IP addresses, so I SSHed onto the one that my laptop was connected to, reasoning that it might have some configuration files for me to mess around with.</p>
+
+<p>```sh
+$ ssh <a href="&#x6d;&#97;&#105;&#x6c;&#116;&#x6f;&#x3a;&#x75;&#x73;&#x65;&#x72;&#x40;&#49;&#57;&#50;&#46;&#49;&#x36;&#x38;&#x2e;&#x31;&#51;&#x38;&#x2e;&#56;&#x30;">&#x75;&#115;&#x65;&#x72;&#x40;&#49;&#x39;&#50;&#46;&#49;&#x36;&#x38;&#x2e;&#49;&#51;&#56;&#x2e;&#56;&#x30;</a>
+<a href="&#109;&#x61;&#x69;&#x6c;&#116;&#111;&#58;&#117;&#x73;&#101;&#114;&#64;&#x31;&#57;&#x32;&#46;&#49;&#54;&#56;&#46;&#49;&#51;&#x38;&#x2e;&#x38;&#48;&#115;">&#x75;&#x73;&#101;&#114;&#x40;&#x31;&#x39;&#x32;&#x2e;&#x31;&#x36;&#x38;&#46;&#x31;&#51;&#56;&#x2e;&#56;&#48;&#x73;</a> password:</p>
+
+<p>BusyBox v1.11.2 (2013-12-17 16:06:18 PST) built-in shell (ash)
+Enter &lsquo;help&rsquo; for a list of built-in commands.</p>
+
+<p>BZ.v3.1.9#
+```</p>
+
+<p>From the prompt I could tell that the device is running  <a href="http://www.busybox.net/">BusyBox</a>, a very small, low resource Linux distribution that is often used on embedded systems.  I&rsquo;m aware of it but have rarely used it.  So I begun looking for config filesin the obvious places.</p>
+
+<p>```sh
+BZ.v3.1.9# ls /etc/</p>
+
+<p>aaa2.cfg         board.info       host.conf        iproute2         profile          startup.list
+aaa3.cfg         config           hosts            l7-protocols     protocols        sysinit
+aaa4.cfg         dropbear         hotplug.d        login.defs       rc.d             sysstat
+aaa5.cfg         ethertypes       hotplug2.rules   mime.types       resolv.conf      udhcpc
+aaa6.cfg         firewall.user    httpd            modules.d        services         udhcpc_services
+aaa7.cfg         fstab            init.d           passwd           shells           version
+atheros.conf     group            inittab          persistent       ssl
+```</p>
+
+<p>Nothing in particular stood out, so rather than checking them all one at a time, I took a look at running processes.</p>
+
+<p>```sh
+BZ.v3.1.9# ps
+  PID USER       VSZ STAT COMMAND</p>
+
+<pre><code>1 deploy    1648 S    init
+...
+</code></pre>
+
+<p>  244 deploy    1136 S    /sbin/hotplug2 &mdash;persistent &mdash;set-rules-file /usr/etc/hotplug2.rules
+  246 deploy    1636 S &lt;  /bin/watchdog -t 1 /dev/watchdog
+ 1087 deploy    1648 S    init
+ 1088 deploy    1636 S    /usr/bin/klogd -c 8 -n
+ 1089 deploy    5920 S    /bin/reset-handler
+ 8439 deploy    3564 S    /bin/hostapd /etc/aaa2.cfg
+ 8440 deploy    3500 S    /bin/hostapd /etc/aaa3.cfg
+ 8441 deploy    3512 S    /bin/hostapd /etc/aaa4.cfg
+ 8443 deploy    3544 S    /bin/hostapd /etc/aaa5.cfg
+ 8444 deploy    3500 S    /bin/hostapd /etc/aaa6.cfg
+ 8447 deploy    3504 S    /bin/hostapd /etc/aaa7.cfg
+ 8561 deploy    1392 S    /sbin/ntpclient -i 86400 -n -s -c 0 -l -h 0.ubnt.pool.ntp.org
+ 8681 deploy       0 SW   [ubnt-roam-rx-hp]
+12484 deploy    1660 S    -sh
+14297 deploy    1644 R    ps
+```</p>
+
+<p>What&rsquo;s interesting here is <a href="http://hostap.epitest.fi/hostapd/">hostapd</a> which I recognised from some previous projects involving <a href="http://www.raspberrypi.org/">Raspberry Pi</a>s.  This daemon is responsible for handling WPA authentication so it seemed like there would be good chance it would know <em>who</em> was authenticating.  Thankfully each hostapd process references a configuration file so I opened one of those next.</p>
+
+<p><code>
+interface=ath6
+bridge=br0
+driver=atheros
+wpa=2
+eapol_version=2
+wpa_key_mgmt=WPA-EAP
+wpa_pairwise=CCMP
+ssid=USWRoam
+wpa_group_rekey=0
+eap_reauth_period=0
+ieee8021x=1
+auth_server_addr=192.168.143.31
+auth_server_port=1812
+auth_server_shared_secret=OMITTED!
+acct_server_addr=192.168.143.31
+acct_server_port=1813
+acct_server_shared_secret=ALSO_OMITTED!
+logger_syslog=-1
+logger_syslog_level=2
+</code></p>
+
+<p>The last two lines reference syslog, but hostapd documentation is not exhaustive, or if it is I simply don&rsquo;t know how to find it.  A brief google did turn up a <a href="http://dev.laptop.org/pub/firmware/libertas/thinfirm/hostapd.conf.sample">sample config</a> that contained some comments explaining the values. <code>logger_syslog</code> is set to &ldquo;-1&rdquo; which logs for all modules so I left it be.<br/>
+<code>logger_syslog_level</code> however is set to &ldquo;2&rdquo; (informational messages), wanting more verbosity, I set it to &ldquo;1&rdquo; (debug) in each of the config files and rebooted the device.</p>
+
+<p>The tailed output from the Ubuntu instance flicked up some messages about the AP going down and coming back up, but nothing more detailed than before.  Upon closer inspection I noticed that the config files had reset to their original states.  Assuming this was probably by design, I started wandering around the more common places people drop their shell aliases.  In <code>/etc/profile</code> I found an amusing comment, and a helpful looking command.</p>
+
+<p>```sh</p>
+
+<h1>habits from ubuntu&hellip;</h1>
+
+<p>alias sudo=&lsquo;&rsquo;
+alias save=&lsquo;cfgmtd -w -p /etc/&rsquo;
+```</p>
+
+<p>I guess Ubiquiti engineers really like Ubuntu.  Anyhow&hellip; the <code>save</code> alias speaks of <code>cfgmtd</code>, so I checked help to see what I could learn.</p>
+
+<p>```sh
+BZ.v3.1.9# cfgmtd -help
+Usage: cfgmtd [options]</p>
+
+<pre><code>-t &lt;type&gt;           - Configuration type to use [1(active)|2(backup)]. (Default: 1(active))
+-f &lt;config file&gt;        - Configuration file to use. (Default: /tmp/system.cfg)
+-p &lt;persistent directory&gt;   - Directory to persistent dir. (Default: none)
+-w              - Write to flash action.
+-r              - Read from flash action.
+-o &lt;mtd|file name&gt;      - Use mtd or file name. (Default: cfg)
+-h              - This message.
+</code></pre>
+
+<p>```</p>
+
+<p>From the flags I could see it was used for reading and writing config to the flash memory of the device, which persists through reboots.  It also told me that the default config is in <code>/tmp/system.cfg</code>, <strong>all 480 lines</strong> of it.</p>
+
+<p><code>
+aaa.2.br.devname=br0
+aaa.2.devname=ath1
+aaa.2.driver=madwifi
+aaa.2.eapol_version=2
+aaa.2.radius.acct.1.ip=192.168.143.31
+aaa.2.radius.acct.1.secret=OMITTED!
+aaa.2.radius.auth.1.ip=192.168.143.31
+aaa.2.radius.auth.1.port=1812
+aaa.2.radius.auth.1.secret=ALSO_OMITTED!
+aaa.2.ssid=Notcutt House
+aaa.2.status=enabled
+aaa.2.verbose=3
+aaa.2.wpa.1.pairwise=TKIP CCMP
+aaa.2.wpa.group_rekey=0
+aaa.2.wpa.key.1.mgmt=WPA-EAP
+aaa.2.wpa.psk=MOAR_OMISSION!
+aaa.2.wpa=3
+</code></p>
+
+<p>Line 12 in the abbreviated sample showed the verbosity being set to 3, which would suggest that only &ldquo;notifications&rdquo; are being logged, but when I checked the config it distinctly showed that <code>logger_syslog_level</code> is set to 2 for informational messages.  At first I didn&rsquo;t notice this mismatch, but eventually through repetition I caught the problem and set the correct value.  With that settled I flashed the device once more.</p>
+
+<p><code>sh
+cfgmtd -f /usr/etc/system.cfg -w &amp;&amp; reboot
+</code></p>
+
+<p>Finally the tailed output from syslog started to show some users authenticating.  The IP address is for the particular AP that received the event, the <a href="http://en.wikipedia.org/wiki/MAC_address">MAC Address</a> refers to the device connecting, in this case my laptop.</p>
+
+<p><code>
+Dec 15 18:33:03 192.168.138.102 hostapd: ath6: STA d0:df:9a:74:e3:cd IEEE 802.1X: STA identity 'USWITCH\baris.balic'
+</code></p>
+
+<p>I thought it would be plain sailing from here on out, but of course that was not the case.  Over the next day or so &ldquo;identity&rdquo; messages stopped appearing in the logs.  The configs for the APs were being reset. I was fairly sure it would be triggered by the controller as it was affecting all of the APs.
+Through trial and error I discovered that certain changes on the controller would reprovision the APs.</p>
+
+<p>SSHing into the controller, I had no idea where to look, so I resorted to reviewing the running processes like before and found some interesting candidates for inspection.</p>
+
+<p><code>sh
+21196 ?        Ss     0:00 unifi -home /usr/lib/jvm/java-6-openjdk-amd64 -cp /usr/share/java/commons-daemon.jar:/usr/lib/unifi/lib/ace.jar -pidfile /var/run/unifi/unifi.pid -procname unifi -outfile SYSLOG -errfile SYSLOG -Djava.awt.headless=true -Xmx1024M com.ubnt.ace.Launcher start
+21198 ?        S      0:05 unifi -home /usr/lib/jvm/java-6-openjdk-amd64 -cp /usr/share/java/commons-daemon.jar:/usr/lib/unifi/lib/ace.jar -pidfile /var/run/unifi/unifi.pid -procname unifi -outfile SYSLOG -errfile SYSLOG -Djava.awt.headless=true -Xmx1024M com.ubnt.ace.Launcher start
+21199 ?        Sl    31:56 unifi -home /usr/lib/jvm/java-6-openjdk-amd64 -cp /usr/share/java/commons-daemon.jar:/usr/lib/unifi/lib/ace.jar -pidfile /var/run/unifi/unifi.pid -procname unifi -outfile SYSLOG -errfile SYSLOG -Djava.awt.headless=true -Xmx1024M com.ubnt.ace.Launcher start
+21218 ?        Sl   803:13 /usr/lib/jvm/java-6-openjdk-amd64/jre/bin/java -Xmx1024M -jar /usr/lib/unifi/lib/ace.jar start
+21235 ?        Sl   911:26 bin/mongod --dbpath /usr/lib/unifi/data/db --port 27117 --logappend --logpath logs/mongod.log --rest
+</code></p>
+
+<p>Seeing the <a href="https://www.mongodb.org/">mongoDB</a> process, I connected to it with <code>mongo --port 27117</code>, which gave me access to the &ldquo;ace&rdquo; database/collections.  It&rsquo;s mostly stats and settings from the control panel on the controller.</p>
+
+<p>The remaining Java processes referenced &ldquo;unifi&rdquo; paths on the filesystem, which is the name of the product itself.  So I pulled down the &ldquo;ace.jar&rdquo; mentioned in the processes and fired up <a href="http://jd.benow.ca/">JD-GUI</a>, a tool that takes <a href="http://en.wikipedia.org/wiki/Java_bytecode">Java bytecode</a> and spits out source code.<br/>
+Most of the time the result looks like shit, symbol names are not preserved and any meaningful structure is lost.  If you&rsquo;re feeling brave, I created <a href="https://gist.github.com/barisbalic/e3dd21cbaa66b25a6e96">this gist</a> for anyone that wants to see what I mean.  This was a class called &ldquo;String&rdquo;, which contained the code for reading and writing settings, I found it by doing a global search for &ldquo;aaa&rdquo; which was part of the filename for the wifi configs.<br/>
+From that massive file the only interesting part is this, as the values are hardcoded it&rsquo;s kind of fortunate that one would provide enough verbosity.</p>
+
+<p><code>java
+"verbose", D.Òo0000() ? "3" : "2"
+</code></p>
+
+<p>The method <code>Òo0000</code> on the class <code>D</code>, was potentially calling another two methods on other classes, if either case were to return the string &ldquo;debug&rdquo; then the desired <code>logger_syslog_level</code> value will be used whenever the controller reprovisions.</p>
+
+<p><code>java
+public static boolean Òo0000()
+{
+  return ("debug".equals(õO0000.getString("build.type"))) || (øO0000.o00000("debug", false));
+}
+</code></p>
+
+<p>I&rsquo;ll spare you the pain of looking at obfuscated code and skip to the conclusion: I eventually discovered the &ldquo;build.type&rdquo; mentioned above would be read from a file called &ldquo;product.properties&rdquo;, and that the &ldquo;debug&rdquo; would be read from &ldquo;system.properties&rdquo;.  Both of which appeared in the compiled JAR itself.  Luckily though, the code actually attempted to read from the file <code>/usr/lib/unifi/data/system.properties</code> before resorting the internal version.  By adding <code>debug=true</code> to it I was able to override the config.  I was finally ready to start building something.</p>
+
+<h2>Building Whereabouts</h2>
+
+<p>Whereabouts is comprised of two pieces: the first is the backend that tails the syslog and upserts documents in a mongo collection, and the second is a basic <a href="https://www.meteor.com/">meteor</a> app that tells you who is where in the building.<br/>
+They are called <a href="https://github.com/barisbalic/whereabouts-syslog-tail">whereabouts-syslog-tail</a> and <a href="https://github.com/barisbalic/whereabouts-meteor">whereabouts-meteor</a> respectively.  They were hacked out quickly so please get in touch, create an issue or send a pull request if you need some help or want to contribute.</p>
+
+<h3>whereabouts-syslog-tail</h3>
+
+<p>When the first set of &ldquo;identity&rdquo; messages started appearing I set up a small <a href="http://nodejs.org/">Node.js</a> script to tail the syslog and write entries into a mongo collection, at first this was just comprised of the username and a MAC Address.  Watching for connection and disconnection messages seemed to cover only edge cases: the collection didn&rsquo;t reflect the state of the network, probably because it was missing things like association and deauthentication.<br/>
+I googled for hostapd documentation but again couldn&rsquo;t find anything useful, so this time I decided to checkout the code.  A spate of &ldquo;event X notification&rdquo; messages would appear in the log, so I looked for the string in the source code.</p>
+
+<p>```cpp
+int wpa_auth_sm_event(struct wpa_state_machine *sm, wpa_event event)
+{
+  int remove_ptk = 1;</p>
+
+<p>  if (sm == NULL)</p>
+
+<pre><code>return -1;
+</code></pre>
+
+<p>  wpa_auth_vlogger(sm->wpa_auth, sm->addr, LOGGER_DEBUG,</p>
+
+<pre><code>   "event %d notification", event);
+</code></pre>
+
+<p>  &hellip;
+}
+```</p>
+
+<p>The shortened example above shows a <code>wpa_event</code> being passed to the logger function, the event turned out to be a basic enum.</p>
+
+<p><code>cpp
+typedef enum {
+  WPA_AUTH, WPA_ASSOC, WPA_DISASSOC, WPA_DEAUTH, WPA_REAUTH,
+  WPA_REAUTH_EAPOL, WPA_ASSOC_FT
+} wpa_event;
+</code></p>
+
+<p>Each of these seven events is implies whether a device is connected or not, for example, seeing a <code>WPA_DEAUTH</code> is enough to say a device is disconnected until another message indicates otherwise.  I modified the script to process these events and update the collection, adding a human-friendly name for each location instead of an IP address.</p>
+
+<p>There&rsquo;s a little more tidy-up done in the app, and it exposes a very basic API, but you can refer to the <a href="https://github.com/barisbalic/whereabouts-syslog-tail">repository</a> for more detail.</p>
+
+<h3>whereabouts-meteor</h3>
+
+<p>Meteor is particularly good for rapidly building single page apps, out of the box it gives you:</p>
+
+<ul>
+<li>Hot code deploys.</li>
+<li>Live updating HTML.</li>
+<li>Handy data synchronisation.</li>
+</ul>
+
+
+<p>The live updates mean that data is bound to templates, when the data changes, the templates react to those changes.  This saves you from having to wire up various events and write other boiler-plate code.</p>
+
+<p>The data synchronisation is also pretty awesome, by default a Meteor app will use a client-side mongo implementation called <a href="https://www.npmjs.org/package/minimongo">minimongo</a>.  It wiring up callbacks for any changes to documents, these changes will then get pushed to all connected clients at the same time.<br/>
+When you specify a real mongodb instance with the <code>MONGO_URL</code> environment variable, Meteor will use that instead, keeping the synchronisation feature.</p>
+
+<p>Given that the the mongo collection reflects the state of the network at any given time, the Meteor app took only a few minutes to create and simply finds all known devices.  They are ordered by whether they are connected, followed by their last connection time.  It&rsquo;s a bit basic but it serves the purpose and acts as a reasonably straight-forward example, I will happily link to any other interfaces that are written.</p>
+
+<h2>Further development?</h2>
+
+<p>An issue that arose from tracking devices is that people often have more than one.  The next obvious feature is allowing people to name their devices by visiting the application with said devices.  It&rsquo;s not possible to obtain a client MAC address in a web-app without resorting to something horrible like <a href="http://en.wikipedia.org/wiki/ActiveX">ActiveX</a> controls, so instead the app will need to compare the client IP address with those of known devices to find a match.
+The IT Ops guys were happy to push our <a href="http://en.wikipedia.org/wiki/Dynamic_Host_Configuration_Protocol">DHCP</a> logs to the remote syslog server I set up, and <a href="https://github.com/barisbalic/whereabouts-syslog-tail">whereabouts-syslog-tail</a> has the code necessary to associate an IP address with a device, but work still needs to be carried out on the front end.</p>
+
+<p>Aside from that I would be happy to work on making the whole solution more generic, and thus more suitable for other networks, but in order for that to happen I&rsquo;ll need volunteers to give feedback on their setup and what does/doesn&rsquo;t work for them, so please get in touch if you&rsquo;d like to/some help.</p>
+]]></content>
+  </entry>
+  
+</feed>
